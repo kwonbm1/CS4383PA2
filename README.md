@@ -440,3 +440,92 @@ You should see the order flow (HTTP → ordering → inventory → ZMQ to robots
 | `PRICING_HOST`, `PRICING_GRPC_PORT` | inventory | Pricing (same cluster: `pricing-service:50052`) |
 | `ORDERING_HOST`, `ORDERING_HTTP_PORT` | client | Ordering HTTP (C2 IP + 30601) |
 | `ORDERING_ZMQ_PORT`, `ORDERING_HOST` | analytics | Ordering ZMQ (same cluster: `ordering-service:5557`) |
+
+---
+
+## PA2 Milestone 2: Locust.io Workload Testing & Tail Latency Analysis
+
+Use **Locust.io** to generate HTTP workloads simulating refrigerator (grocery order) and truck (restock) traffic, then measure **P50, P90, P95, P99 tail latencies** and plot **CDF curves**. No ContainerLab HIL is needed for this milestone.
+
+### Prerequisites
+
+Ensure services are deployed on C2 (core) and C3 (robots) from Milestone 1, and install the Locust dependency:
+
+```bash
+cd ~/CS4383PA2
+source .venv/bin/activate
+pip install -r requirements.txt     # includes locust, matplotlib, numpy
+```
+
+### SSH tunnel (if running Locust from your Mac)
+
+C2 has no public IP. Set up a tunnel through the bastion so Locust can reach the ordering service NodePort:
+
+```bash
+ssh -L 30601:172.16.2.136:30601 bastion
+```
+
+Then use `http://localhost:30601` as the Locust target.
+
+### 1. Run a single Locust scenario (interactive web UI)
+
+```bash
+cd ~/CS4383PA2
+locust -f experiments/locustfile.py --host http://localhost:30601
+```
+
+Open **http://localhost:8089** in your browser. Set the number of users, spawn rate, and click **Start**.
+
+### 2. Run a single scenario (headless — no web UI)
+
+```bash
+locust -f experiments/locustfile.py --host http://localhost:30601 \
+    --headless -u 20 -r 5 -t 60s --csv experiments/results/my_test
+```
+
+### 3. Run the full experiment suite (5 scenarios)
+
+```bash
+chmod +x experiments/run_locust_experiments.sh
+./experiments/run_locust_experiments.sh http://localhost:30601
+```
+
+This runs **low_load** (5 users), **medium_load** (20), **high_load** (50), **burst** (100), and **ramp_up** (50 users, slow spawn) in sequence. CSV data is saved to `experiments/results/<scenario>/`.
+
+### 4. Analyze results and generate plots
+
+```bash
+python3 -m experiments.analyze_latencies
+```
+
+This reads the raw per-request latency CSVs and generates:
+
+| Plot | Description |
+| ---- | ----------- |
+| `cdf_<scenario>.png` | CDF comparing refrigerator vs truck latency for each scenario |
+| `cdf_compare_api_order.png` | CDF comparing refrigerator latency across all scenarios |
+| `cdf_compare_api_restock.png` | CDF comparing truck latency across all scenarios |
+| `percentile_bars_api_order.png` | P50/P90/P95/P99 bar chart for refrigerator requests |
+| `percentile_bars_api_restock.png` | P50/P90/P95/P99 bar chart for truck requests |
+| `cdf_combined_all.png` | Combined CDF for all scenarios |
+
+All plots are saved to `experiments/plots/`.
+
+### Workload design
+
+| User class | Weight | Simulates | Request | Wait between requests |
+| ---------- | ------ | --------- | ------- | --------------------- |
+| `RefrigeratorUser` | 7 (70%) | Smart fridges | `POST /api/order` | 1–3 s |
+| `TruckUser` | 3 (30%) | Delivery trucks | `POST /api/restock` | 2–5 s |
+
+Refrigerators dominate traffic as specified in the assignment. Each grocery order randomly selects 1–10 items; each restock order selects 3–15 items with larger quantities.
+
+### Experiment scenarios
+
+| Scenario | Users | Spawn Rate | Duration | Purpose |
+| -------- | ----- | ---------- | -------- | ------- |
+| low_load | 5 | 1/s | 60s | Baseline |
+| medium_load | 20 | 5/s | 90s | Moderate concurrency |
+| high_load | 50 | 10/s | 120s | Stress test |
+| burst | 100 | 50/s | 60s | Sudden spike |
+| ramp_up | 50 | 1/s | 180s | Gradual increase |

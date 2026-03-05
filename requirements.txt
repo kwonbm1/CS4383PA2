@@ -43,3 +43,6 @@ tzdata==2025.3
 urllib3==2.6.3
 Werkzeug==3.1.5
 zipp==3.23.0
+locust>=2.20
+matplotlib>=3.7
+numpy>=1.24
